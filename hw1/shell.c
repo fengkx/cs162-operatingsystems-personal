@@ -167,19 +167,19 @@ int io_redirect(tok_t *args){
 		dup2(fd, STDIN_FILENO);
 	}
 
-	int lindex = 0;
-	// min but expect 0
-	if(in_index != 0 && out_index != 0) {
-		lindex = in_index < out_index ? in_index : out_index;
-	} else {
-		lindex = in_index > out_index ? in_index : out_index;
-	}
-	if(lindex>0) {
-		args[lindex++] = NULL;
-		for (int i=lindex;i<MAXTOKS && args[i];i++) {
-			args[i] = NULL;
+	if(in_index >0) {
+		for(int i=in_index;i<MAXTOKS && args[i];i++) {
+			args[i] = args[i+2];
+			args[i+2] = NULL;
 		}
 	}
+	if(out_index >0) {
+		for(int i=out_index;i<MAXTOKS && args[i];i++) {
+			args[i] = args[i+2];
+			args[i+2] = NULL;
+		}
+	}
+	
 	return 0;
 }
 
