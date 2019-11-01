@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <limits.h>
+#include <fcntl.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -142,7 +143,47 @@ char *path_resolve(char *cmd) {
 	return r;
 }
 
-int run_external(char *cmd, char *args[]) {
+int io_redirect(tok_t *args){
+	int out_index = isDirectTok(args, ">");
+	int in_index = isDirectTok(args, "<");
+	int fd;
+
+	if(!out_index && !in_index) return 0;
+
+	// assume all format correct
+	if (out_index) {
+		char *out_fname = args[out_index+1];
+		if((fd = open(out_fname, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
+			perror("open error:");
+		}
+		dup2(fd, STDOUT_FILENO);
+	}
+	
+	if (in_index) {
+		char *in_fname = args[in_index+1];
+		if((fd = open(in_fname, O_RDONLY)) < 0) {
+			perror("open error:");
+		}
+		dup2(fd, STDIN_FILENO);
+	}
+
+	int lindex = 0;
+	// min but expect 0
+	if(in_index != 0 && out_index != 0) {
+		lindex = in_index < out_index ? in_index : out_index;
+	} else {
+		lindex = in_index > out_index ? in_index : out_index;
+	}
+	if(lindex>0) {
+		args[lindex++] = NULL;
+		for (int i=lindex;i<MAXTOKS && args[i];i++) {
+			args[i] = NULL;
+		}
+	}
+	return 0;
+}
+
+int run_external(char *cmd, tok_t args[]) {
 	pid_t cpid = fork();
 	int status;
 	if(cpid > 0) { // parent
@@ -150,6 +191,8 @@ int run_external(char *cmd, char *args[]) {
 			fprintf(stderr, "%s", "wait error");
 		}
 	} else if(cpid == 0) { // child
+		if(io_redirect(args) < 0)
+			exit(1);
 		execv(cmd, args);
 		exit(0);
 	}
@@ -185,6 +228,7 @@ int shell (int argc, char *argv[]) {
     }
     fprintf(stdout,"%d: ",++lineNum);
   }
+  freeToks(t);
   return 0;
 }
 

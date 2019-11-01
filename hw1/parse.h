@@ -33,5 +33,6 @@ typedef char *tok_t;
 
 tok_t *getToks(char *line);
 void freeToks(tok_t *toks);
+int isDirectTok(tok_t* args, char *R);
 
 #endif
