@@ -4,8 +4,10 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <limits.h>
+
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 
 #define FALSE 0
@@ -100,7 +102,47 @@ int lookup(char cmd[]) {
   return -1;
 }
 
-int run_external(char *args[]) {
+char *path_resolve(char *cmd) {
+	int max_len;
+	char *buf = path_alloc(&max_len);
+#ifdef _WIN32
+	if(cmd[0] == '.' && cmd[1] == '\\') {
+#else
+	if(cmd[0] == '.' && cmd[1] == '/') {
+#endif
+		getcwd(buf, max_len);
+		strcat(buf, &cmd[1]);
+		return buf;
+	}
+	char *tmp = getenv("PATH");
+	char *env_path = malloc(strlen(tmp) + 1);
+	strcpy(env_path, tmp);
+	char *p = strtok(env_path, ":");
+	while(p) {
+		size_t path_len = strlen(p);
+		size_t remain_len = max_len - path_len - 1; // -1 for delim
+		strcpy(buf, p);
+#ifdef _WIN32
+		strcat(buf, "\\");
+#else
+		strcat(buf, "/");
+#endif
+		strncat(buf, cmd, remain_len);
+		struct stat st;
+		if(lstat(buf, &st) == 0 && st.st_mode & S_IEXEC) {
+			break;
+		}
+		p = strtok(NULL, ":");
+	}
+	free(env_path);
+	if(!p) return NULL;
+	char *r = malloc(strlen(buf)+1);
+	strcpy(r, buf);
+	free(buf);
+	return r;
+}
+
+int run_external(char *cmd, char *args[]) {
 	pid_t cpid = fork();
 	int status;
 	if(cpid > 0) { // parent
@@ -108,7 +150,7 @@ int run_external(char *args[]) {
 			fprintf(stderr, "%s", "wait error");
 		}
 	} else if(cpid == 0) { // child
-		execv(args[0], args);
+		execv(cmd, args);
 		exit(0);
 	}
 	return 0;
@@ -132,8 +174,14 @@ int shell (int argc, char *argv[]) {
     if (fundex >= 0) cmd_table[fundex].fun(&t[1]);
     else {			/* Treat it as a file to exec */
       // fprintf(stdout,"This shell currently supports only built-ins.  Replace this to run programs as commands.\n");
-      if(t[0] != NULL && strlen(t[0]) > 0)
-	      run_external(t);
+      if(t[0] != NULL && strlen(t[0]) > 0) {
+	      char *cmd = path_resolve(t[0]);
+	      if(cmd == NULL) fprintf(stderr, "Command not found: %s\n", t[0]);
+	      else {
+		      run_external(cmd, t);
+		      free(cmd);
+	      }
+      }
     }
     fprintf(stdout,"%d: ",++lineNum);
   }
