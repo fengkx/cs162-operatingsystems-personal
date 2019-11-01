@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -232,6 +233,23 @@ int shell (int argc, char *argv[]) {
   return 0;
 }
 
+void setup_sig() {
+	sigset_t set, old_set;
+	if(sigemptyset(&set) <0) {
+		perror("sigemptyset err");
+		exit(1);
+	}
+	if(sigaddset(&set, SIGINT) <0) {
+		perror("sigaddset err");
+		exit(1);
+	}
+	if(sigprocmask(SIG_BLOCK, &set, &old_set) <0) {
+		perror("sigprocmask err");
+		exit(1);
+	}
+}
+
 int main (int argc, char *argv[]) {
+	setup_sig();
   return shell(argc, argv);
 }
