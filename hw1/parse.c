@@ -12,7 +12,7 @@
 
 #define TOKseparator " \n"
 
-tok_t *getToks(char *line) {
+tok_t *getToks(char *line, size_t *len) {
   int i;
   char *c;
 
@@ -24,6 +24,7 @@ tok_t *getToks(char *line) {
     toks[i] = c;
     c = strtok(NULL,TOKseparator);	/* scan for next token */
   }
+  *len = i;
   return toks;
 }
 

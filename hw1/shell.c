@@ -25,6 +25,11 @@ static int _path_max = PATH_MAX;
 static int _path_max = 0;
 #endif
 
+
+static sigset_t set, old_set;
+static pid_t ccpid = -1;
+static int bg_count = 0;
+
 char *path_alloc(int *s) {
 	if(_path_max == 0) {
 		_path_max = _FB_PATH_MAX;
@@ -43,7 +48,8 @@ int cmd_quit(tok_t arg[]) {
 
 int cmd_help(tok_t arg[]);
 int cmd_pwd(tok_t arg[]);
-int cmd_cd(tok_t argp[]);
+int cmd_cd(tok_t arg[]);
+int cmd_wait(tok_t arg[]);
 
 /* Command Lookup table */
 typedef int cmd_fun_t (tok_t args[]); /* cmd functions take token arra and rtn int */
@@ -57,7 +63,8 @@ fun_desc_t cmd_table[] = {
   {cmd_help, "?", "show this help menu"},
   {cmd_quit, "quit", "quit the command shell"},
   {cmd_pwd, "pwd", "get current directory"},
-  {cmd_cd, "cd", "change current directory"}
+  {cmd_cd, "cd", "change current directory"},
+  {cmd_wait, "wait", "wait for all background process"}
 };
 
 int cmd_help(tok_t arg[]) {
@@ -67,6 +74,18 @@ int cmd_help(tok_t arg[]) {
   }
   return 1;
 }
+
+int cmd_wait(tok_t arg[]) {
+	pid_t p;
+	while((p = waitpid(-1, NULL, 0)) != 0) {
+		if (errno == ECHILD) { // all waited
+			break;
+		} else {
+			return 1;
+		}
+	}
+	return 0;
+} 
 
 // pwd
 int cmd_pwd(tok_t arg[]) {
@@ -184,14 +203,40 @@ int io_redirect(tok_t *args){
 	return 0;
 }
 
-int run_external(char *cmd, tok_t args[]) {
+void sigint_handler(int sig) {
+	if(sig == SIGINT) {
+		puts("SIGINT handler");
+	}
+}
+
+int run_external(char *cmd, tok_t args[], int is_bg) {
 	pid_t cpid = fork();
-	int status;
+	pid_t p;
 	if(cpid > 0) { // parent
-		if(wait(&status) != cpid) {
-			fprintf(stderr, "%s", "wait error");
-		}
+		ccpid = cpid;
+		int status;
+		if (is_bg) {
+			fprintf(stdout, "[%d]: %d\n", ++bg_count, cpid);
+			fprintf(stdout, "background work:");
+			int i =0;
+			tok_t t = args[i++];
+			while(t) {
+				fprintf(stdout, " %s", t);
+				t = args[i++];
+			}
+			fputc('\n', stdout);
+		} else if((p = wait(&status)) == cpid){
+			if(WIFSIGNALED(status)) {
+				putc('\n', stdout);
+			}
+		} 
 	} else if(cpid == 0) { // child
+		// struct sigaction sa;
+		// sa.sa_handler = sigint_handler;
+		// sigaction(SIGINT, &sa, NULL);
+		//
+		// signal handler not inherited after exec but mask do
+		sigprocmask(SIG_SETMASK, &old_set, NULL);
 		if(io_redirect(args) < 0)
 			exit(1);
 		execv(cmd, args);
@@ -202,7 +247,7 @@ int run_external(char *cmd, tok_t args[]) {
 
 int shell (int argc, char *argv[]) {
   char *s;			/* user input string */
-  tok_t *t;			/* tokens parsed from input */
+  tok_t *t = NULL;			/* tokens parsed from input */
   int lineNum = 0;
   int fundex = -1;
   pid_t pid = getpid();		/* get current processes pid */
@@ -213,28 +258,39 @@ int shell (int argc, char *argv[]) {
   lineNum=0;
   fprintf(stdout,"%d: ",lineNum);
  while ((s = freadln(stdin))) {
-    t = getToks(s);		/* Break the line into tokens */
+    int is_bg;
+    size_t t_len = 0;
+    t = getToks(s, &t_len);		/* Break the line into tokens */
     fundex = lookup(t[0]);	/* Is first token a shell literal */
     if (fundex >= 0) cmd_table[fundex].fun(&t[1]);
     else {			/* Treat it as a file to exec */
-      // fprintf(stdout,"This shell currently supports only built-ins.  Replace this to run programs as commands.\n");
       if(t[0] != NULL && strlen(t[0]) > 0) {
 	      char *cmd = path_resolve(t[0]);
 	      if(cmd == NULL) fprintf(stderr, "Command not found: %s\n", t[0]);
 	      else {
-		      run_external(cmd, t);
+		      if(strncmp(t[t_len-1], "&", 1) == 0)  {// is_bg
+			      is_bg = 1;
+			      t[t_len-1]=NULL;
+		      } else {
+			      int len = strlen(t[t_len-1]);
+			      if(t[t_len-1][len-1] == '&') {
+				      is_bg = 1;
+				      t[t_len-1][len-1] = '\0';
+			      }
+		      }
+		      run_external(cmd, t, is_bg);
 		      free(cmd);
 	      }
       }
     }
     fprintf(stdout,"%d: ",++lineNum);
   }
-  freeToks(t);
+  if(t != NULL)
+  	freeToks(t);
   return 0;
 }
 
 void setup_sig() {
-	sigset_t set, old_set;
 	if(sigemptyset(&set) <0) {
 		perror("sigemptyset err");
 		exit(1);
@@ -247,6 +303,7 @@ void setup_sig() {
 		perror("sigprocmask err");
 		exit(1);
 	}
+
 }
 
 int main (int argc, char *argv[]) {
